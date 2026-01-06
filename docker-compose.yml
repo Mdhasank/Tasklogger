@@ -2,14 +2,18 @@ version: '3.8'
 
 services:
   backend:
-    build: ./backend
+    image: ${BACKEND_IMAGE:-tasklogger-backend:latest}
+    build:
+      context: ./backend
     ports:
       - "5000:5000"
     environment:
       - NODE_ENV=production
 
   frontend:
-    build: ./frontend
+    image: ${FRONTEND_IMAGE:-tasklogger-frontend:latest}
+    build:
+      context: ./frontend
     ports:
       - "3000:80"
     depends_on:
