@@ -14,46 +14,54 @@ pipeline {
             }
         }
 
-        stage('Test Backend') {
-            steps {
-                dir('backend') {
-                    // Running tests in a node container to avoid polluting the host
-                    sh "docker run --rm -v ${WORKSPACE}/backend:/app -w /app node:18 sh -c 'npm install && npm test'"
+        stage('Build Images') {
+            parallel {
+                stage('Backend') {
+                    steps {
+                        dir('backend') {
+                            // Docker caches 'npm install' here automatically!
+                            sh "docker build -t ${BACKEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-backend:latest ."
+                        }
+                    }
                 }
-            }
-        }
-
-        stage('Test Frontend') {
-            steps {
-                dir('frontend') {
-                    // Running tests in a node container to avoid polluting the host
-                    sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install && npm test -- run'"
-                }
-            }
-        }
-
-        stage('Build & Push Backend') {
-            steps {
-                dir('backend') {
-                    sh "docker build -t ${BACKEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-backend:latest ."
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS}"
-                        sh "docker push ${BACKEND_IMAGE}"
-                        sh "docker push ${DOCKER_HUB_USER}/task-logger-backend:latest"
+                stage('Frontend') {
+                    steps {
+                        dir('frontend') {
+                            // Docker caches 'npm install' and 'npm build' here!
+                            sh "docker build -t ${FRONTEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-frontend:latest ."
+                        }
                     }
                 }
             }
         }
 
-        stage('Build & Push Frontend') {
-            steps {
-                dir('frontend') {
-                    sh "docker build -t ${FRONTEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-frontend:latest ."
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS}"
-                        sh "docker push ${FRONTEND_IMAGE}"
-                        sh "docker push ${DOCKER_HUB_USER}/task-logger-frontend:latest"
+        stage('Test') {
+            parallel {
+                stage('Backend Tests') {
+                    steps {
+                        // Run tests INSIDE the image we just built - no re-install needed!
+                        sh "docker run --rm ${BACKEND_IMAGE} npm test"
                     }
+                }
+                stage('Frontend Tests') {
+                    steps {
+                        // Use a node container but map the cached workspace
+                        dir('frontend') {
+                            sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 npm test -- run"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh "docker login -u ${DOCKER_USER} -p ${DOCKER_PASS}"
+                    sh "docker push ${BACKEND_IMAGE}"
+                    sh "docker push ${DOCKER_HUB_USER}/task-logger-backend:latest"
+                    sh "docker push ${FRONTEND_IMAGE}"
+                    sh "docker push ${DOCKER_HUB_USER}/task-logger-frontend:latest"
                 }
             }
         }
@@ -68,9 +76,6 @@ pipeline {
     }
 
     post {
-        always {
-            cleanWs()
-        }
         success {
             echo '✅ Pipeline completed successfully!'
         }
