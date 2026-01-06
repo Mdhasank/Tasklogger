@@ -14,42 +14,32 @@ pipeline {
             }
         }
 
-        stage('Build Images') {
-            parallel {
-                stage('Backend') {
-                    steps {
-                        dir('backend') {
-                            // Docker caches 'npm install' here automatically!
-                            sh "docker build -t ${BACKEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-backend:latest ."
-                        }
-                    }
-                }
-                stage('Frontend') {
-                    steps {
-                        dir('frontend') {
-                            // Docker caches 'npm install' and 'npm build' here!
-                            sh "docker build -t ${FRONTEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-frontend:latest ."
-                        }
-                    }
+        stage('Build Backend') {
+            steps {
+                dir('backend') {
+                    sh "docker build -t ${BACKEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-backend:latest ."
                 }
             }
         }
 
-        stage('Test') {
-            parallel {
-                stage('Backend Tests') {
-                    steps {
-                        // Run tests INSIDE the image we just built - no re-install needed!
-                        sh "docker run --rm ${BACKEND_IMAGE} npm test"
-                    }
+        stage('Build Frontend') {
+            steps {
+                dir('frontend') {
+                    sh "docker build -t ${FRONTEND_IMAGE} -t ${DOCKER_HUB_USER}/task-logger-frontend:latest ."
                 }
-                stage('Frontend Tests') {
-                    steps {
-                        // Use a node container but map the cached workspace
-                        dir('frontend') {
-                            sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install && npm test -- run'"
-                        }
-                    }
+            }
+        }
+
+        stage('Test Backend') {
+            steps {
+                sh "docker run --rm ${BACKEND_IMAGE} npm test"
+            }
+        }
+
+        stage('Test Frontend') {
+            steps {
+                dir('frontend') {
+                    sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install --no-audit --no-fund && npm test -- run'"
                 }
             }
         }
