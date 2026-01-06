@@ -47,7 +47,7 @@ pipeline {
                     steps {
                         // Use a node container but map the cached workspace
                         dir('frontend') {
-                            sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 npm test -- run"
+                            sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install && npm test -- run'"
                         }
                     }
                 }
