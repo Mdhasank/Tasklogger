@@ -27,7 +27,7 @@ pipeline {
             steps {
                 dir('frontend') {
                     // Running tests in a node container to avoid polluting the host
-                    sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install && npm test'"
+                    sh "docker run --rm -v ${WORKSPACE}/frontend:/app -w /app node:18 sh -c 'npm install && npm test -- run'"
                 }
             }
         }

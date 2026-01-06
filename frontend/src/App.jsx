@@ -15,7 +15,9 @@ function App() {
     hasPrevPage: false
   });
 
-  const API_BASE = '/api';
+  const API_BASE = (typeof window !== 'undefined' && window.location.origin.startsWith('http'))
+    ? '/api'
+    : 'http://localhost:5000/api';
 
   const fetchTasks = useCallback(async (page = 1) => {
     setLoading(true);
