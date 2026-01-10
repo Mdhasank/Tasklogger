@@ -113,7 +113,7 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>TaskLogger</h1>
-        <p>Organize your tasks with style</p>
+        <p>Organize your daily987 tasks with style</p>
       </header>
       <main className="content-wrapper">
         <div className="task-form">
