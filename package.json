@@ -1,0 +1,12 @@
+{
+  "name": "tasklogger-root",
+  "version": "1.0.0",
+  "description": "TaskLogger Root Project for Deployment",
+  "scripts": {
+    "install:backend": "cd backend && npm install",
+    "install:frontend": "cd frontend && npm install",
+    "install-all": "npm run install:backend && npm run install:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    "start": "cd backend && NODE_ENV=production node server.js"
+  }
+}

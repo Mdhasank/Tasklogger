@@ -1,11 +1,35 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import './App.css';
 
+// Component Imports
+import Auth from './components/Auth';
+import Sidebar from './components/Sidebar';
+import Header from './components/Header';
+import StatsGrid from './components/StatsGrid';
+import TaskCard from './components/TaskCard';
+import TaskModal from './components/TaskModal';
+
+const API_BASE = '/api';
+
 function App() {
+  const [user, setUser] = useState(JSON.parse(localStorage.getItem('user')) || null);
+  const [token, setToken] = useState(localStorage.getItem('token') || null);
+  const [isLogin, setIsLogin] = useState(true);
+  const [authData, setAuthData] = useState({ email: '', password: '', name: '' });
+  const [authError, setAuthError] = useState('');
+
   const [tasks, setTasks] = useState([]);
-  const [newTask, setNewTask] = useState({ title: '', description: '', status: 'pending', dueDate: '' });
+  const [stats, setStats] = useState({ total: 0, pending: 0, completed: 0, urgent: 0 });
+  const [showModal, setShowModal] = useState(false);
+  const [newTask, setNewTask] = useState({ title: '', description: '', status: 'pending', dueDate: '', priority: 'medium', category: 'general' });
   const [editingTask, setEditingTask] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Filters and Sidebar
+  const [view, setView] = useState('all'); // 'all', 'pending', 'completed', 'category-work', etc.
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pagination, setPagination] = useState({
     totalPages: 1,
@@ -15,293 +39,256 @@ function App() {
     hasPrevPage: false
   });
 
-  const API_BASE = (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1' && window.location.hostname !== '')
-    ? '/api'
-    : 'http://localhost:5000/api';
+  const authHeader = useMemo(() => ({
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`
+  }), [token]);
 
   const fetchTasks = useCallback(async (page = 1) => {
+    if (!token) return;
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE}/tasks?page=${page}&limit=${pagination.itemsPerPage}`);
+      let statusFilter = '&status=pending';
+      if (view === 'completed') statusFilter = '&status=completed';
+
+      let categoryFilter = '';
+      if (view.startsWith('category-')) categoryFilter = `&category=${view.split('-')[1]}`;
+
+      const priorityFilter = filterPriority ? `&priority=${filterPriority}` : '';
+      const searchParam = searchQuery ? `&search=${encodeURIComponent(searchQuery)}` : '';
+
+      const response = await fetch(`${API_BASE}/tasks?page=${page}&limit=${pagination.itemsPerPage}${statusFilter}${categoryFilter}${priorityFilter}${searchParam}`, {
+        headers: authHeader
+      });
+
+      if (response.status === 403 || response.status === 401) {
+        handleLogout();
+        return;
+      }
       const data = await response.json();
       setTasks(data.tasks || []);
-      setPagination({
+      setStats(data.stats || stats);
+      setPagination(prev => ({
+        ...prev,
         totalPages: data.pagination.totalPages,
         totalItems: data.pagination.totalItems,
-        itemsPerPage: data.pagination.itemsPerPage,
         hasNextPage: data.pagination.hasNextPage,
         hasPrevPage: data.pagination.hasPrevPage
-      });
+      }));
     } catch (error) {
       console.error('Error fetching tasks:', error);
     }
     setLoading(false);
-  }, [pagination.itemsPerPage]);
+  }, [token, authHeader, pagination.itemsPerPage, view, searchQuery, filterPriority]);
 
   useEffect(() => {
-    fetchTasks(currentPage);
+    setCurrentPage(1);
+    fetchTasks(1);
+  }, [view, searchQuery, filterPriority, fetchTasks]);
+
+  useEffect(() => {
+    if (currentPage > 1) {
+      fetchTasks(currentPage);
+    }
   }, [currentPage, fetchTasks]);
 
-  const handlePageChange = useCallback((newPage) => {
-    if (newPage >= 1 && newPage <= pagination.totalPages) {
-      setCurrentPage(newPage);
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const endpoint = isLogin ? '/auth/login' : '/auth/signup';
+    try {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(authData)
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        throw new Error("Server returned non-JSON response. Please ensure the backend server is running.");
+      }
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Authentication failed');
+
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      setToken(data.token);
+      setUser(data.user);
+      // Clear inputs upon success
+      setAuthData({ email: '', password: '', name: '' });
+    } catch (error) {
+      setAuthError(error.message);
     }
-  }, [pagination.totalPages]);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+    setTasks([]);
+    setStats({ total: 0, pending: 0, completed: 0, urgent: 0 });
+    // Clear inputs upon logout
+    setAuthData({ email: '', password: '', name: '' });
+  };
 
   const addTask = useCallback(async (e) => {
     e.preventDefault();
     if (!newTask.title.trim()) return;
 
     try {
-      await fetch(`${API_BASE}/tasks`, {
+      const response = await fetch(`${API_BASE}/tasks`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeader,
         body: JSON.stringify(newTask)
       });
-      setNewTask({ title: '', description: '', status: 'pending', dueDate: '' });
-      // Refetch current page to show updated list
-      fetchTasks(currentPage);
+      if (!response.ok) throw new Error('Failed to add task');
+      setNewTask({ title: '', description: '', status: 'pending', dueDate: '', priority: 'medium', category: 'general' });
+      setShowModal(false);
+      fetchTasks(1);
     } catch (error) {
       console.error('Error adding task:', error);
     }
-  }, [newTask, currentPage, fetchTasks]);
+  }, [newTask, fetchTasks, authHeader]);
 
   const updateTask = useCallback(async (e) => {
     e.preventDefault();
     if (!editingTask.title.trim()) return;
 
     try {
-      await fetch(`${API_BASE}/tasks/${editingTask.id}`, {
+      const response = await fetch(`${API_BASE}/tasks/${editingTask.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeader,
         body: JSON.stringify(editingTask)
       });
+      if (!response.ok) throw new Error('Failed to update task');
       setEditingTask(null);
-      // Refetch current page to show updated list
       fetchTasks(currentPage);
     } catch (error) {
       console.error('Error updating task:', error);
     }
-  }, [editingTask, currentPage, fetchTasks]);
+  }, [editingTask, currentPage, fetchTasks, authHeader]);
 
   const deleteTask = useCallback(async (id) => {
+    if (!window.confirm("Are you sure you want to delete this task?")) return;
     try {
-      await fetch(`${API_BASE}/tasks/${id}`, { method: 'DELETE' });
-      // Refetch current page to show updated list
+      await fetch(`${API_BASE}/tasks/${id}`, {
+        method: 'DELETE',
+        headers: authHeader
+      });
       fetchTasks(currentPage);
     } catch (error) {
       console.error('Error deleting task:', error);
     }
-  }, [currentPage, fetchTasks]);
+  }, [currentPage, fetchTasks, authHeader]);
 
   const toggleStatus = useCallback(async (task) => {
     const updatedTask = { ...task, status: task.status === 'pending' ? 'completed' : 'pending' };
     try {
       await fetch(`${API_BASE}/tasks/${task.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeader,
         body: JSON.stringify(updatedTask)
       });
-      // Refetch current page to show updated list
       fetchTasks(currentPage);
     } catch (error) {
       console.error('Error updating task status:', error);
     }
-  }, [currentPage, fetchTasks]);
+  }, [currentPage, fetchTasks, authHeader]);
+
+  if (!token) {
+    return <Auth
+      isLogin={isLogin}
+      setIsLogin={setIsLogin}
+      authData={authData}
+      setAuthData={setAuthData}
+      handleAuth={handleAuth}
+      authError={authError}
+    />;
+  }
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>TaskLogger</h1>
-        <p>Organize your tasks with style</p>
-      </header>
-      <main className="content-wrapper">
-        <div className="task-form">
-          <h2>Add New Task</h2>
-          <form onSubmit={addTask}>
-            <div className="form-group">
-              <label htmlFor="task-title">Task Title</label>
-              <input
-                id="task-title"
-                type="text"
-                placeholder="Enter task title..."
-                value={newTask.title}
-                onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-                required
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="task-description">Description</label>
-              <textarea
-                id="task-description"
-                placeholder="Add a description..."
-                value={newTask.description}
-                onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="task-status">Status</label>
-              <select
-                id="task-status"
-                value={newTask.status}
-                onChange={(e) => setNewTask({ ...newTask, status: e.target.value })}
-              >
-                <option value="pending">Pending</option>
-                <option value="completed">Completed</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label htmlFor="task-due-date">Due Date</label>
-              <input
-                id="task-due-date"
-                type="date"
-                value={newTask.dueDate}
-                onChange={(e) => setNewTask({ ...newTask, dueDate: e.target.value })}
-              />
-            </div>
-            <button type="submit">Add Task</button>
-          </form>
+    <div className={`App dashboard ${isMobileMenuOpen ? 'mobile-nav-active' : ''}`}>
+      {isMobileMenuOpen && <div className="sidebar-overlay" onClick={() => setIsMobileMenuOpen(false)}></div>}
+
+      <Sidebar
+        isMobileMenuOpen={isMobileMenuOpen}
+        setIsMobileMenuOpen={setIsMobileMenuOpen}
+        view={view}
+        setView={setView}
+        setCurrentPage={setCurrentPage}
+        stats={stats}
+        user={user}
+        handleLogout={handleLogout}
+      />
+
+      <main className="main-content">
+        <Header
+          view={view}
+          stats={stats}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          setShowModal={setShowModal}
+          setIsMobileMenuOpen={setIsMobileMenuOpen}
+        />
+
+        <StatsGrid stats={stats} />
+
+        <div className="toolbar">
+          <div className="filters">
+            <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
+              <option value="">All Priorities</option>
+              <option value="high">High Priority</option>
+              <option value="medium">Medium Priority</option>
+              <option value="low">Low Priority</option>
+            </select>
+          </div>
         </div>
 
-        <div className="task-list">
-          <h2>Your Tasks</h2>
+        <section className="task-container">
           {loading ? (
-            <div className="loading-state">Loading tasks...</div>
+            <div className="loader">Refreshing tasks...</div>
           ) : tasks.length === 0 ? (
             <div className="empty-state">
-              <p>No tasks yet. Create your first task to get started!</p>
+              <div className="empty-img">🌌</div>
+              <h3>Everything is clear!</h3>
+              <p>Looks like you don't have any tasks in this view.</p>
+              <button onClick={() => setShowModal(true)}>Create One Now</button>
             </div>
           ) : (
-            <ul>
+            <div className="task-list-modern">
               {tasks.map(task => (
-                <li key={task.id} className={`task-item ${task.status}`}>
-                  {editingTask && editingTask.id === task.id ? (
-                    <form onSubmit={updateTask}>
-                      <input
-                        type="text"
-                        value={editingTask.title}
-                        onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
-                        required
-                      />
-                      <textarea
-                        value={editingTask.description}
-                        onChange={(e) => setEditingTask({ ...editingTask, description: e.target.value })}
-                      />
-                      <select
-                        value={editingTask.status}
-                        onChange={(e) => setEditingTask({ ...editingTask, status: e.target.value })}
-                      >
-                        <option value="pending">Pending</option>
-                        <option value="completed">Completed</option>
-                      </select>
-                      <input
-                        type="date"
-                        value={editingTask.dueDate || ''}
-                        onChange={(e) => setEditingTask({ ...editingTask, dueDate: e.target.value })}
-                      />
-                      <div className="task-actions">
-                        <button type="submit">Save</button>
-                        <button type="button" onClick={() => setEditingTask(null)}>Cancel</button>
-                      </div>
-                    </form>
-                  ) : (
-                    <div className="task-content">
-                      <span className={`status-badge ${task.status}`}>
-                        {task.status}
-                      </span>
-                      <h3>{task.title}</h3>
-                      {task.description && <p>{task.description}</p>}
-                      <div className="task-meta">
-                        {task.dueDate && (
-                          <span>📅 {new Date(task.dueDate).toLocaleDateString()}</span>
-                        )}
-                        <span>🕐 Created {new Date(task.createdAt).toLocaleDateString()}</span>
-                      </div>
-                      <div className="task-actions">
-                        <button onClick={() => toggleStatus(task)}>
-                          {task.status === 'pending' ? '✓ Complete' : '↻ Reopen'}
-                        </button>
-                        <button onClick={() => setEditingTask(task)}>✏️ Edit</button>
-                        <button onClick={() => deleteTask(task.id)}>🗑️ Delete</button>
-                      </div>
-                    </div>
-                  )}
-                </li>
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  editingTask={editingTask}
+                  setEditingTask={setEditingTask}
+                  updateTask={updateTask}
+                  deleteTask={deleteTask}
+                  toggleStatus={toggleStatus}
+                />
               ))}
-            </ul>
-          )}
-
-          {/* Pagination Controls */}
-          {!loading && tasks.length > 0 && (
-            <div className="pagination">
-              <div className="pagination-info">
-                Showing {((currentPage - 1) * pagination.itemsPerPage) + 1} - {Math.min(currentPage * pagination.itemsPerPage, pagination.totalItems)} of {pagination.totalItems} tasks
-              </div>
-              <div className="pagination-controls">
-                <button
-                  onClick={() => handlePageChange(1)}
-                  disabled={!pagination.hasPrevPage}
-                  className="pagination-btn"
-                  title="First page"
-                >
-                  «
-                </button>
-                <button
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={!pagination.hasPrevPage}
-                  className="pagination-btn"
-                  title="Previous page"
-                >
-                  ‹
-                </button>
-
-                {[...Array(pagination.totalPages)].map((_, index) => {
-                  const pageNum = index + 1;
-                  // Show first, last, current, and adjacent pages
-                  if (
-                    pageNum === 1 ||
-                    pageNum === pagination.totalPages ||
-                    (pageNum >= currentPage - 1 && pageNum <= currentPage + 1)
-                  ) {
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => handlePageChange(pageNum)}
-                        className={`pagination-btn ${pageNum === currentPage ? 'active' : ''}`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  } else if (
-                    pageNum === currentPage - 2 ||
-                    pageNum === currentPage + 2
-                  ) {
-                    return <span key={pageNum} className="pagination-ellipsis">...</span>;
-                  }
-                  return null;
-                })}
-
-                <button
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={!pagination.hasNextPage}
-                  className="pagination-btn"
-                  title="Next page"
-                >
-                  ›
-                </button>
-                <button
-                  onClick={() => handlePageChange(pagination.totalPages)}
-                  disabled={!pagination.hasNextPage}
-                  className="pagination-btn"
-                  title="Last page"
-                >
-                  »
-                </button>
-              </div>
             </div>
           )}
-        </div>
+        </section>
+
+        {pagination.totalPages > 1 && (
+          <div className="footer-pagination">
+            <button disabled={!pagination.hasPrevPage} onClick={() => setCurrentPage(p => p - 1)}>Prev</button>
+            <span className="page-numbers">Page {currentPage} of {pagination.totalPages}</span>
+            <button disabled={!pagination.hasNextPage} onClick={() => setCurrentPage(p => p + 1)}>Next</button>
+          </div>
+        )}
       </main>
+
+      <TaskModal
+        showModal={showModal}
+        setShowModal={setShowModal}
+        addTask={addTask}
+        newTask={newTask}
+        setNewTask={setNewTask}
+      />
     </div>
   );
 }
