@@ -112,7 +112,7 @@ function App() {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Task-Hasan</h1>
+        <h1>TaskLogger</h1>
         <p>Organize your tasks with style</p>
       </header>
       <main className="content-wrapper">
